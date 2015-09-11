@@ -1,0 +1,282 @@
+%%% This file is part of the RayActor Lighting Software.
+%%%
+%%% RayActor is free software: you can redistribute it and/or modify it under
+%%% the terms of the GNU Affero General Public License as published by the Free
+%%% Software Foundation, either version 3 of the License, or (at your option)
+%%% any later version.
+%%%
+%%% RayActor is distributed in the hope that it will be useful, but WITHOUT ANY
+%%% WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+%%% FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+%%% more details.
+%%%
+%%% You should have received a copy of the GNU Affero General Public License
+%%% along with Rayactor. If not, see <http://www.gnu.org/licenses/>.
+%%%
+-module(rayactor_enttec).
+-behaviour(gen_fsm).
+
+-export([start_link/0, send_dmx/2]).
+
+-export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
+         terminate/3, code_change/4]).
+
+-export([wait_for_hw_version/2, wait_for_dmx/2, wait_for_dmx_change/2]).
+
+-record(state, {uart, dmxin = none}).
+
+-type enttec_packet_type() ::
+    assign_ports | change_of_state | flash_page | get_hw_version |
+    get_parameters | get_serial | receive_dmx_on_change | received_dmx |
+    reprogram_firmware | send_dmx | send_dmx2 | send_rdm | send_rdm_discovery |
+    set_parameters.
+
+-spec start_link() -> {ok, term()} | ignore | {error, term()}.
+
+start_link() ->
+    gen_fsm:start_link({local, ?MODULE}, ?MODULE, auto, []).
+
+-spec send_dmx(integer(), binary()) -> ok | {error, term()}.
+
+send_dmx(1, Data) -> send_to_widget(send_dmx, Data);
+send_dmx(2, Data) -> send_to_widget(send_dmx2, Data);
+send_dmx(_, _)    -> {error, unknown_universe}.
+
+-spec send_to_widget(enttec_packet_type(), term()) -> ok.
+
+send_to_widget(Type, Data) ->
+    gen_fsm:send_all_state_event(?MODULE, {send_to_widget, Type, Data}).
+
+-spec get_packet_type(integer()) -> enttec_packet_type() | unknown.
+
+get_packet_type(2)  -> flash_page;
+get_packet_type(3)  -> get_parameters;
+get_packet_type(5)  -> received_dmx;
+get_packet_type(9)  -> change_of_state;
+get_packet_type(10) -> get_serial;
+get_packet_type(14) -> get_hw_version;
+get_packet_type(_)  -> unknown.
+
+-spec put_packet_type(enttec_packet_type()) -> integer() | unknown.
+
+put_packet_type(reprogram_firmware)    -> 1;
+put_packet_type(flash_page)            -> 2;
+put_packet_type(get_parameters)        -> 3;
+put_packet_type(set_parameters)        -> 4;
+put_packet_type(send_dmx)              -> 6;
+put_packet_type(send_rdm)              -> 7;
+put_packet_type(receive_dmx_on_change) -> 8;
+put_packet_type(get_serial)            -> 10;
+put_packet_type(send_rdm_discovery)    -> 11;
+put_packet_type(enable_api_v2)         -> 13;
+put_packet_type(get_hw_version)        -> 14;
+put_packet_type(send_dmx2)             -> 203;
+put_packet_type(assign_ports)          -> 151;
+put_packet_type(_)                     -> unknown.
+
+-spec decode_packet_data(enttec_packet_type(), binary()) ->
+    {ok, term()} | {error, term()}.
+
+decode_packet_data(received_dmx, <<0, 0, Data/binary>>) ->
+    {ok, Data};
+decode_packet_data(received_dmx, <<0:6, 1:1, _/binary>>) ->
+    {error, queue_overflow};
+decode_packet_data(received_dmx, <<0:7, 1:1, _/binary>>) ->
+    {error, queue_overrun};
+decode_packet_data(received_dmx, <<0, S, _/binary>>) when S /= 0 ->
+    {error, unknown_start_code};
+decode_packet_data(get_parameters, <<FwVer:16/little, Break, MarkAfterBreak,
+                                     Rate, _/binary>>) ->
+    {ok, #{firmware_version => FwVer,
+           break_time => Break,
+           mark_after_break_time => MarkAfterBreak,
+           output_rate => Rate}};
+decode_packet_data(get_hw_version, <<Ver>>) ->
+    {ok, Ver};
+decode_packet_data(change_of_state, <<Offset, Index:5/binary, Data/binary>>) ->
+    {ok, {Offset, Index, Data}};
+decode_packet_data(_, _) ->
+    {error, unknown_packet}.
+
+-spec decode_packet(integer(), binary()) ->
+    {ok, enttec_packet_type(), term()} | {error, term()}.
+
+decode_packet(Type, Data) ->
+    case get_packet_type(Type) of
+        unknown  -> {error, unknown_packet_type};
+        TypeName ->
+            case decode_packet_data(TypeName, Data) of
+                {ok, Result} -> {ok, TypeName, Result};
+                {error, Err} -> {error, Err}
+            end
+    end.
+
+-spec encode_packet_data(enttec_packet_type(), term()) ->
+    {ok, binary()} | {error, term()}.
+
+encode_packet_data(send_dmx, Data) ->
+    {ok, <<0, Data/binary>>};
+encode_packet_data(send_dmx2, Data) ->
+    {ok, <<0, Data/binary>>};
+encode_packet_data(assign_ports, {Dunno, Dunno}) ->
+    {ok, <<Dunno, Dunno>>};
+encode_packet_data(receive_dmx_on_change, send_always) ->
+    {ok, <<0>>};
+encode_packet_data(receive_dmx_on_change, on_change_only) ->
+    {ok, <<1>>};
+encode_packet_data(get_parameters, _) ->
+    {ok, <<0:16>>};
+encode_packet_data(enable_api_v2, Key) ->
+    {ok, <<Key:32/little>>};
+encode_packet_data(get_hw_version, _) ->
+    {ok, <<>>};
+encode_packet_data(unknown, _) ->
+    {error, unknown_packet_type};
+encode_packet_data(_, _) ->
+    {error, invalid_packet_data}.
+
+-spec encode_packet(enttec_packet_type(), term()) ->
+    {ok, binary()} | {error, term()}.
+
+encode_packet(Type, Data) ->
+    TypeNum = put_packet_type(Type),
+    case encode_packet_data(Type, Data) of
+        {ok, Result} ->
+            Len = byte_size(Result),
+            {ok, <<16#7E, TypeNum, Len:16/little, Result/binary, 16#E7>>};
+        {error, Err} -> {error, Err}
+    end.
+
+-spec reverse_bits(binary(), binary()) -> binary().
+
+reverse_bits(<<>>, Acc) -> Acc;
+reverse_bits(<<B:1, Rest/bitstring>>, Acc) ->
+    reverse_bits(Rest, <<B:1, Acc/bitstring>>).
+
+-spec reverse_bits(binary()) -> binary().
+
+reverse_bits(Data) ->
+    << <<(reverse_bits(Byte, <<>>))/binary>> || <<Byte:1/binary>> <= Data >>.
+
+-spec splice_dmx_change(Index :: integer(),
+                        Changed :: binary(),
+                        Data :: binary(),
+                        Acc :: binary()) -> ok.
+
+splice_dmx_change([0 | RestIdx], Unchanged,
+                  <<Current, RestData/binary>>, Acc) ->
+    splice_dmx_change(RestIdx, Unchanged, RestData, <<Acc/binary, Current>>);
+splice_dmx_change([1 | RestIdx], <<Changed, RestChanged/binary>>,
+                  <<_, RestData/binary>>, Acc) ->
+    splice_dmx_change(RestIdx, RestChanged, RestData, <<Acc/binary, Changed>>);
+splice_dmx_change(_, <<>>, Rest, Acc) ->
+    <<Acc/binary, Rest/binary>>.
+
+-spec splice_dmx_change(Index :: binary(),
+                        Changed :: binary(),
+                        Data :: binary()) -> ok.
+
+splice_dmx_change(Index, Changed, Data) ->
+    splice_dmx_change([I || <<I:1>> <= reverse_bits(Index)],
+                      Changed, Data, <<>>).
+
+-spec match_ttyusb(file:filename()) -> boolean().
+
+match_ttyusb([$t, $t, $y, $U, $S, $B | _]) -> true;
+match_ttyusb(_)                            -> false.
+
+-spec init(auto | file:filename()) ->
+    {ok, atom(), uart:uart()} | {error, term()}.
+
+init(auto) ->
+    Dev = "/dev",
+    {ok, Files} = file:list_dir(Dev),
+    init(hd([filename:join(Dev, F) || F <- Files, match_ttyusb(F)]));
+
+init(TTY) ->
+    {ok, Uart} = uart:open(TTY, [{mode, binary}]),
+    {ok, SendFull} = encode_packet(receive_dmx_on_change, send_always),
+    uart:send(Uart, SendFull),
+    {ok, GetParams} = encode_packet(get_hw_version, none),
+    uart:send(Uart, GetParams),
+    uart:async_recv(Uart, 4),
+    {ok, wait_for_hw_version, #state{uart = Uart}, 2000}.
+
+wait_for_hw_version({from_widget, get_hw_version, _Ver}, State) ->
+    % Permission to publish the API key granted by ENTTEC.
+    % Ticket reference: EU #DQA-88617-214
+    {ok, EnableApi} = encode_packet(enable_api_v2, 16#BFC77FA4),
+    uart:send(State#state.uart, EnableApi),
+    {ok, AssignPorts} = encode_packet(assign_ports, {1, 1}),
+    uart:send(State#state.uart, AssignPorts),
+    {next_state, wait_for_dmx, State};
+
+wait_for_hw_version(timeout, State) ->
+    {next_state, wait_for_dmx, State};
+
+wait_for_hw_version(_, State) ->
+    {next_state, wait_for_hw_version, State}.
+
+xxx_refactor_me_into_router_xxx(<<RGBW:32/bitstring, _/binary>>) ->
+    Send = binary:copy(RGBW, 64),
+    send_dmx(2, Send),
+    ok.
+
+wait_for_dmx({from_widget, received_dmx, Data}, State) ->
+    {ok, ChangeOnly} = encode_packet(receive_dmx_on_change, on_change_only),
+    uart:send(State#state.uart, ChangeOnly),
+    Padding = binary:copy(<<0>>, 512 - byte_size(Data)),
+    FullData = <<Data/binary, Padding/binary>>,
+    xxx_refactor_me_into_router_xxx(FullData),
+    {next_state, wait_for_dmx, State#state{dmxin = FullData}};
+
+wait_for_dmx({from_widget, change_of_state, _} = Data, State) ->
+    wait_for_dmx_change(Data, State).
+
+wait_for_dmx_change({from_widget, change_of_state, {Offset, Index, Data}},
+                    #state{dmxin = Old} = State) ->
+    StartByte = Offset * 8,
+    <<Start:StartByte/binary, Rest/binary>> = <<0, Old/binary>>,
+    NewRest = splice_dmx_change(Index, Data, Rest),
+    <<0, New/binary>> = <<Start/binary, NewRest/binary>>,
+    xxx_refactor_me_into_router_xxx(New),
+    {next_state, wait_for_dmx_change, State#state{dmxin = New}}.
+
+handle_event({send_to_widget, Type, Data}, StateName, State) ->
+    {ok, Raw} = encode_packet(Type, Data),
+    uart:send(State#state.uart, Raw),
+    {next_state, StateName, State};
+
+handle_event(_Event, StateName, State) ->
+    {next_state, StateName, State}.
+
+handle_sync_event(_Event, _From, StateName, State) ->
+    {next_state, StateName, State}.
+
+handle_info({uart_async, Uart, _Ref, <<16#7E, _, Len:16/little>> = Header},
+            StateName, #state{uart = Uart} = State) ->
+    uart:unrecv(State#state.uart, Header),
+    uart:async_recv(State#state.uart, Len + 5),
+    {next_state, StateName, State};
+
+handle_info({uart_async, Uart, _Ref, <<16#7E, Type, Len:16/little,
+                                       Data:Len/binary, 16#E7>>},
+            StateName, #state{uart = Uart} = State) ->
+    case decode_packet(Type, Data) of
+        {ok, DType, DData} ->
+            gen_fsm:send_event(self(), {from_widget, DType, DData});
+        {error, Error} ->
+            gen_fsm:send_event(self(), {widget_error, Error})
+    end,
+    uart:async_recv(Uart, 4),
+    {next_state, StateName, State};
+
+handle_info(_Info, StateName, State) ->
+    {next_state, StateName, State}.
+
+terminate(_Reason, _StateName, #state{uart = Uart}) ->
+    uart:close(Uart),
+    ok.
+
+code_change(_OldVsn, StateName, State, _Extra) ->
+    {ok, StateName, State}.
