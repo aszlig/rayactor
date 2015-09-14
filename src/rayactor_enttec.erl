@@ -271,6 +271,10 @@ handle_info({uart_async, Uart, _Ref, <<16#7E, Type, Len:16/little,
     uart:async_recv(Uart, 4),
     {next_state, StateName, State};
 
+handle_info({uart_async, Uart, _Ref, {error, Err}}, _StateName,
+            #state{uart = Uart} = State) ->
+    {stop, {widget_error, Err}, State};
+
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
