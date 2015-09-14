@@ -262,14 +262,12 @@ handle_info({uart_async, Uart, _Ref, <<16#7E, _, Len:16/little>> = Header},
 handle_info({uart_async, Uart, _Ref, <<16#7E, Type, Len:16/little,
                                        Data:Len/binary, 16#E7>>},
             StateName, #state{uart = Uart} = State) ->
-    case decode_packet(Type, Data) of
-        {ok, DType, DData} ->
-            gen_fsm:send_event(self(), {from_widget, DType, DData});
-        {error, Error} ->
-            gen_fsm:send_event(self(), {widget_error, Error})
+    Event = case decode_packet(Type, Data) of
+        {ok, DType, DData} -> {from_widget, DType, DData};
+        {error, Error}     -> {widget_error, Error}
     end,
     uart:async_recv(Uart, 4),
-    {next_state, StateName, State};
+    ?MODULE:StateName(Event, State);
 
 handle_info({uart_async, Uart, _Ref, {error, Err}}, _StateName,
             #state{uart = Uart} = State) ->
