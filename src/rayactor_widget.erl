@@ -16,7 +16,7 @@
 -module(rayactor_widget).
 -include("rayactor.hrl").
 
--export([behaviour_info/1, start_widget/3, send_dmx/2]).
+-export([behaviour_info/1, start_widget/3, send_dmx/2, send_dmx/3]).
 
 behaviour_info(callbacks) ->
     [{start_widget, 1}, {dmx_from_router, 3}];
@@ -38,4 +38,9 @@ start_widget(Mod, UniCfg, Opts) ->
 -spec send_dmx(integer(), binary()) -> ok.
 
 send_dmx(Port, Data) ->
-    gen_server:cast(rayactor_router, {dmx_to_router, self(), Port, Data}).
+    send_dmx(self(), Port, Data).
+
+-spec send_dmx(pid(), integer(), binary()) -> ok.
+
+send_dmx(MainPid, Port, Data) ->
+    gen_server:cast(rayactor_router, {dmx_to_router, MainPid, Port, Data}).
