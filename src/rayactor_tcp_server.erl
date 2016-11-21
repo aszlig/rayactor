@@ -30,20 +30,27 @@ start_link(LSock) ->
 -spec init({gen_tcp:socket(), pid()}) -> {ok, #{}}.
 
 init({LSock, Parent}) ->
-    self() ! {accept, LSock, Parent},
-    {ok, #{}}.
+    self() ! {accept, LSock},
+    {ok, #{pressed => gb_sets:new(), parent => Parent}}.
 
-handle_info({accept, LSock, Parent}, #{}) ->
+handle_info({accept, LSock}, #{parent := Parent} = State) ->
     case gen_tcp:accept(LSock) of
         {ok, Socket} ->
             {ok, _} = supervisor:start_child(Parent, []),
             inet:setopts(Socket, [{active, once}, {buffer, 2}, {packet, raw}]),
-            {noreply, #{sock => Socket}};
+            {noreply, State#{sock => Socket}};
         {error, Err} -> {stop, {error, Err}}
     end;
 
-handle_info({tcp, Socket, <<P:1, _:7, Key:8>>}, #{sock := Socket} = State) ->
-    io:format("Pressed: ~p; Key: ~p~n", [P, Key]),
+handle_info({tcp, Socket, <<P:1, _:7, Key:8>>},
+            #{sock := Socket, pressed := Pressed, parent := Parent} = State) ->
+    NewPressed = case P of
+        1 -> gb_sets:add(Key, Pressed);
+        0 -> gb_sets:delete(Key, Pressed)
+    end,
+    DistFun = fun(K, Data) -> rayactor_dmx:set(K, 255, Data) end,
+    DmxData = gb_sets:fold(DistFun, rayactor_dmx:new(), NewPressed),
+    rayactor_widget:send_dmx(Parent, 1, DmxData),
     inet:setopts(Socket, [{active, once}]),
     {noreply, State};
 
@@ -51,7 +58,9 @@ handle_info({tcp, Socket, _}, #{sock := Socket} = State) ->
     inet:setopts(Socket, [{active, once}]),
     {noreply, State};
 
-handle_info({tcp_closed, Socket}, #{sock := Socket} = State) ->
+handle_info({tcp_closed, Socket}, #{sock := Socket,
+                                    parent := Parent} = State) ->
+    rayactor_widget:send_dmx(Parent, 1, rayactor_dmx:new()),
     {stop, normal, State}.
 
 handle_call(_Msg, _From, State) ->
