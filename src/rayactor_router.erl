@@ -60,8 +60,8 @@ handle_call({register_widget, Mod, Pid, UniCfg}, _, State) ->
     end, State, UniCfg),
     {reply, ok, NewState};
 
-handle_call({recv_dmx, Uni}, _From, #{inputs := Widgets} = State) ->
-    Reply = case maps:find(Uni, Widgets) of
+handle_call({recv_dmx, Uni}, _From, #{input_buffers := InBuf} = State) ->
+    Reply = case maps:find(Uni, InBuf) of
         {ok, Data} -> {ok, Data};
         error -> universe_not_found
     end,
