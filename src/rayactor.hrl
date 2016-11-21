@@ -13,29 +13,7 @@
 %%% You should have received a copy of the GNU Affero General Public License
 %%% along with Rayactor. If not, see <http://www.gnu.org/licenses/>.
 %%%
--module(rayactor_sup).
 
--behaviour(supervisor).
+-type universe() :: atom().
 
--export([start_link/1]).
-
--export([init/1]).
-
--spec start_link([rayactor_config:widget_options()]) ->
-    supervisor:startlink_ret().
-
-start_link(Widgets) ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, Widgets).
-
--spec init([rayactor_config:widget_options()]) ->
-    {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
-
-init(Widgets) ->
-    Router = #{id => rayactor_router,
-               start => {rayactor_router, start_link, []},
-               restart => permanent,
-               modules => [rayactor_router]},
-
-    WSpecs = [rayactor_config:to_childspec(W) || W <- Widgets],
-
-    {ok, {{one_for_one, 5, 10}, [Router] ++ WSpecs}}.
+-record(widget, {module, pid, port}).

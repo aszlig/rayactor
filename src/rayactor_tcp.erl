@@ -14,22 +14,33 @@
 %%% along with Rayactor. If not, see <http://www.gnu.org/licenses/>.
 %%%
 -module(rayactor_tcp).
--behaviour(supervisor).
 
--export([start_link/2]).
+-behaviour(supervisor).
+-behaviour(rayactor_widget).
+
+-export([start_widget/1, dmx_from_router/3]).
 
 -export([init/1]).
 
--spec start_link(inet:port_number(), inet:ip_address()) ->
-    {ok, supervisor:startlink_ret()}.
+-type tcp_widget_opts() :: #{address => inet:ip_address(),
+                             port => inet:port_number()}.
 
-start_link(Port, Address) ->
+-spec dmx_from_router(pid(), integer(), binary()) -> ok.
+
+dmx_from_router(_Pid, _Port, _Data) -> ok.
+
+-spec start_widget(tcp_widget_opts()) ->
+    {ok, term()} | ignore | {error, term()}.
+
+start_widget(Opts) ->
+    Port = maps:get(port, Opts, 3000),
+    Address = maps:get(address, Opts, {127,0,0,1}),
     case supervisor:start_link(?MODULE, {Port, Address}) of
         {ok, Pid} -> {ok, _} = supervisor:start_child(Pid, []), {ok, Pid};
         Otherwise -> Otherwise
     end.
 
--spec init({inet:port_number(), inet:ip_address()}) ->
+-spec init({rayactor_widget:widget(), inet:port_number(), inet:ip_address()}) ->
     {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 
 init({Port, Address}) ->

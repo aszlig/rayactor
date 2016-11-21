@@ -15,8 +15,9 @@
 %%%
 -module(rayactor_enttec).
 -behaviour(gen_fsm).
+-behaviour(rayactor_widget).
 
--export([start_link/0, send_dmx/2]).
+-export([start_widget/1, dmx_from_router/3]).
 
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
          terminate/3, code_change/4]).
@@ -25,27 +26,30 @@
 
 -record(state, {uart, dmxin = none}).
 
+-type enttec_widget_opts() :: #{device => file:filename()}.
+
 -type enttec_packet_type() ::
     assign_ports | change_of_state | flash_page | get_hw_version |
     get_parameters | get_serial | receive_dmx_on_change | received_dmx |
     reprogram_firmware | send_dmx | send_dmx2 | send_rdm | send_rdm_discovery |
     set_parameters.
 
--spec start_link() -> {ok, term()} | ignore | {error, term()}.
+-spec start_widget(enttec_widget_opts()) ->
+    {ok, pid()} | ignore | {error, term()}.
 
-start_link() ->
-    gen_fsm:start_link({local, ?MODULE}, ?MODULE, auto, []).
+start_widget(Opts) ->
+    gen_fsm:start_link(?MODULE, Opts, [{debug, [trace]}]).
 
--spec send_dmx(integer(), binary()) -> ok | {error, term()}.
+-spec dmx_from_router(pid(), integer(), binary()) -> ok | {error, term()}.
 
-send_dmx(1, Data) -> send_to_widget(send_dmx, Data);
-send_dmx(2, Data) -> send_to_widget(send_dmx2, Data);
-send_dmx(_, _)    -> {error, unknown_universe}.
+dmx_from_router(Pid, 1, Data) -> send_to_widget(Pid, send_dmx, Data);
+dmx_from_router(Pid, 2, Data) -> send_to_widget(Pid, send_dmx2, Data);
+dmx_from_router(_, _, _)      -> {error, unknown_universe}.
 
--spec send_to_widget(enttec_packet_type(), term()) -> ok.
+-spec send_to_widget(pid(), enttec_packet_type(), term()) -> ok.
 
-send_to_widget(Type, Data) ->
-    gen_fsm:send_all_state_event(?MODULE, {send_to_widget, Type, Data}).
+send_to_widget(Pid, Type, Data) ->
+    gen_fsm:send_all_state_event(Pid, {send_to_widget, Type, Data}).
 
 -spec get_packet_type(integer()) -> enttec_packet_type() | unknown.
 
@@ -185,22 +189,23 @@ splice_dmx_change(Index, Changed, Data) ->
 match_ttyusb([$t, $t, $y, $U, $S, $B | _]) -> true;
 match_ttyusb(_)                            -> false.
 
--spec init(auto | file:filename()) ->
+-spec init(enttec_widget_opts()) ->
     {ok, atom(), uart:uart()} | {error, term()}.
 
-init(auto) ->
-    Dev = "/dev",
-    {ok, Files} = file:list_dir(Dev),
-    init(hd([filename:join(Dev, F) || F <- Files, match_ttyusb(F)]));
-
-init(TTY) ->
+init(#{device := TTY}) ->
     {ok, Uart} = uart:open(TTY, [{mode, binary}]),
     {ok, SendFull} = encode_packet(receive_dmx_on_change, send_always),
     uart:send(Uart, SendFull),
     {ok, GetParams} = encode_packet(get_hw_version, none),
     uart:send(Uart, GetParams),
     uart:async_recv(Uart, 4),
-    {ok, wait_for_hw_version, #state{uart = Uart}, 2000}.
+    {ok, wait_for_hw_version, #state{uart = Uart}, 2000};
+
+init(_) ->
+    Dev = "/dev",
+    {ok, Files} = file:list_dir(Dev),
+    Found = hd([filename:join(Dev, F) || F <- Files, match_ttyusb(F)]),
+    init(#{device => Found}).
 
 wait_for_hw_version({from_widget, get_hw_version, _Ver}, State) ->
     % Permission to publish the API key granted by ENTTEC.
@@ -217,17 +222,12 @@ wait_for_hw_version(timeout, State) ->
 wait_for_hw_version(_, State) ->
     {next_state, wait_for_hw_version, State}.
 
-xxx_refactor_me_into_router_xxx(<<RGBW:32/bitstring, _/binary>>) ->
-    Send = binary:copy(RGBW, 64),
-    send_dmx(2, Send),
-    ok.
-
 wait_for_dmx({from_widget, received_dmx, Data}, State) ->
     {ok, ChangeOnly} = encode_packet(receive_dmx_on_change, on_change_only),
     uart:send(State#state.uart, ChangeOnly),
     Padding = binary:copy(<<0>>, 512 - byte_size(Data)),
     FullData = <<Data/binary, Padding/binary>>,
-    xxx_refactor_me_into_router_xxx(FullData),
+    rayactor_widget:send_dmx(1, FullData),
     {next_state, wait_for_dmx, State#state{dmxin = FullData}};
 
 wait_for_dmx({from_widget, change_of_state, _} = Data, State) ->
@@ -239,7 +239,7 @@ wait_for_dmx_change({from_widget, change_of_state, {Offset, Index, Data}},
     <<Start:StartByte/binary, Rest/binary>> = <<0, Old/binary>>,
     NewRest = splice_dmx_change(Index, Data, Rest),
     <<0, New/binary>> = <<Start/binary, NewRest/binary>>,
-    xxx_refactor_me_into_router_xxx(New),
+    rayactor_widget:send_dmx(1, New),
     {next_state, wait_for_dmx_change, State#state{dmxin = New}}.
 
 handle_event({send_to_widget, Type, Data}, StateName, State) ->
