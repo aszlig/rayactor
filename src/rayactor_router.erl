@@ -29,7 +29,7 @@
 send_dmx(Universe, Data) ->
     gen_server:cast(rayactor_router, {send_dmx, Universe, Data}).
 
--spec recv_dmx(universe()) -> binary().
+-spec recv_dmx(universe()) -> ok.
 
 recv_dmx(Universe) ->
     gen_server:call(rayactor_router, {recv_dmx, Universe}).
@@ -44,39 +44,37 @@ start_link() ->
 -spec init([]) -> {ok, #{}}.
 
 init([]) ->
-    {ok, #{outputs => #{}, inputs => #{}, input_buffers => #{}}}.
+    {ok, #{outputs => #{}, inputs => #{}, receivers => #{}}}.
 
 handle_info(_Info, State) ->
     {noreply, State}.
 
 handle_call({register_widget, Mod, Pid, UniCfg}, _, State) ->
     NewState = maps:fold(fun
-        (Name, #{direction := in, port := Port},
-               #{inputs := In, input_buffers := InBuf} = Acc) ->
-            Acc#{inputs => In#{{Pid, Port} => Name},
-                 input_buffers => InBuf#{Name => binary:copy(<<0>>, 512)}};
+        (Name, #{direction := in, port := Port}, #{inputs := In} = Acc) ->
+            Acc#{inputs => In#{{Pid, Port} => Name}};
         (Name, #{direction := out, port := Port}, #{outputs := Out} = Acc) ->
             Acc#{outputs => Out#{Name => {Mod, Pid, Port}}}
     end, State, UniCfg),
     {reply, ok, NewState};
 
-handle_call({recv_dmx, Uni}, _From, #{input_buffers := InBuf} = State) ->
-    Reply = case maps:find(Uni, InBuf) of
-        {ok, Data} -> {ok, Data};
-        error -> universe_not_found
-    end,
-    {reply, Reply, State};
+handle_call({recv_dmx, Uni}, {Pid, _}, #{receivers := Recs} = State) ->
+    NewState = State#{
+        receivers => Recs#{Uni => [Pid | maps:get(Uni, Recs, [])]}
+    },
+    {reply, ok, NewState};
 
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
 handle_cast({dmx_to_router, Pid, Port, Data},
-            #{inputs := In, input_buffers := InBuf} = State) ->
-    NewState = case maps:find({Pid, Port}, In) of
-        {ok, Name} -> State#{input_buffers => maps:update(Name, Data, InBuf)};
-        _          -> State
+            #{inputs := In, receivers := Receivers} = State) ->
+    case maps:find({Pid, Port}, In) of
+        {ok, Name} -> lists:foreach(fun(P) -> P ! {dmx_data, Name, Data} end,
+                                    maps:get(Name, Receivers, []));
+        error      -> ignore
     end,
-    {noreply, NewState};
+    {noreply, State};
 
 handle_cast({send_dmx, Uni, Data}, #{outputs := Outputs} = State) ->
     case maps:find(Uni, Outputs) of
