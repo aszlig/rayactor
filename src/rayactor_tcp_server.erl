@@ -46,7 +46,7 @@ handle_info({tcp, Socket, <<P:1, _:7, Key:8>>},
             #{sock := Socket, pressed := Pressed, parent := Parent} = State) ->
     NewPressed = case P of
         1 -> gb_sets:add(Key, Pressed);
-        0 -> gb_sets:delete(Key, Pressed)
+        0 -> gb_sets:del_element(Key, Pressed)
     end,
     DistFun = fun(K, Data) -> rayactor_dmx:set(K, 255, Data) end,
     DmxData = gb_sets:fold(DistFun, rayactor_dmx:new(), NewPressed),
