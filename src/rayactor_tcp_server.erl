@@ -52,7 +52,7 @@ handle_info({tcp, Socket, <<P:1, _:7, Key:8>>},
     DmxData = gb_sets:fold(DistFun, rayactor_dmx:new(), NewPressed),
     rayactor_widget:send_dmx(Parent, 1, DmxData),
     inet:setopts(Socket, [{active, once}]),
-    {noreply, State};
+    {noreply, State#{pressed => NewPressed}};
 
 handle_info({tcp, Socket, _}, #{sock := Socket} = State) ->
     inet:setopts(Socket, [{active, once}]),
