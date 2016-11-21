@@ -30,7 +30,7 @@
 dmx_from_router(_Pid, _Port, _Data) -> ok.
 
 -spec start_widget(tcp_widget_opts()) ->
-    {ok, term()} | ignore | {error, term()}.
+    {ok, pid()} | ignore | {error, term()}.
 
 start_widget(Opts) ->
     Port = maps:get(port, Opts, 3000),
@@ -39,9 +39,6 @@ start_widget(Opts) ->
         {ok, Pid} -> {ok, _} = supervisor:start_child(Pid, []), {ok, Pid};
         Otherwise -> Otherwise
     end.
-
--spec init({rayactor_widget:widget(), inet:port_number(), inet:ip_address()}) ->
-    {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 
 init({Port, Address}) ->
     {ok, LSock} = gen_tcp:listen(Port, [binary, {ip, Address},

@@ -83,7 +83,7 @@ put_packet_type(_)                     -> unknown.
 
 decode_packet_data(received_dmx, <<0, 0, Data/binary>>) ->
     {ok, Data};
-decode_packet_data(received_dmx, <<0:6, 1:1, _/binary>>) ->
+decode_packet_data(received_dmx, <<0:6, 1:1, 0:1, _/binary>>) ->
     {error, queue_overflow};
 decode_packet_data(received_dmx, <<0:7, 1:1, _/binary>>) ->
     {error, queue_overrun};
@@ -162,10 +162,10 @@ reverse_bits(<<B:1, Rest/bitstring>>, Acc) ->
 reverse_bits(Data) ->
     << <<(reverse_bits(Byte, <<>>))/binary>> || <<Byte:1/binary>> <= Data >>.
 
--spec splice_dmx_change(Index :: [integer()],
+-spec splice_dmx_change(Index :: [0 | 1],
                         Changed :: binary(),
                         Data :: binary(),
-                        Acc :: binary()) -> ok.
+                        Acc :: binary()) -> binary().
 
 splice_dmx_change([0 | RestIdx], Unchanged,
                   <<Current, RestData/binary>>, Acc) ->
@@ -178,7 +178,7 @@ splice_dmx_change(_, <<>>, Rest, Acc) ->
 
 -spec splice_dmx_change(Index :: binary(),
                         Changed :: binary(),
-                        Data :: binary()) -> ok.
+                        Data :: binary()) -> binary().
 
 splice_dmx_change(Index, Changed, Data) ->
     splice_dmx_change([I || <<I:1>> <= reverse_bits(Index)],
@@ -188,9 +188,6 @@ splice_dmx_change(Index, Changed, Data) ->
 
 match_ttyusb([$t, $t, $y, $U, $S, $B | _]) -> true;
 match_ttyusb(_)                            -> false.
-
--spec init(enttec_widget_opts()) ->
-    {ok, atom(), uart:uart()} | {error, term()}.
 
 init(#{device := TTY}) ->
     {ok, Uart} = uart:open(TTY, [{mode, binary}]),

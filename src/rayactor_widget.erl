@@ -16,12 +16,10 @@
 -module(rayactor_widget).
 -include("rayactor.hrl").
 
--export([behaviour_info/1, start_widget/3, send_dmx/2, send_dmx/3]).
+-export([start_widget/3, send_dmx/2, send_dmx/3]).
 
-behaviour_info(callbacks) ->
-    [{start_widget, 1}, {dmx_from_router, 3}];
-behaviour_info(_) ->
-    undefined.
+-callback start_widget(#{}) -> {ok, pid()} | ignore | {error, term()}.
+-callback dmx_from_router(pid(), integer(), binary()) -> ok | {error, term()}.
 
 -spec start_widget(module(), rayactor_config:universe_config(), #{}) ->
     {ok, pid()} | ignore | {error, term()}.
