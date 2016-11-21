@@ -162,7 +162,7 @@ reverse_bits(<<B:1, Rest/bitstring>>, Acc) ->
 reverse_bits(Data) ->
     << <<(reverse_bits(Byte, <<>>))/binary>> || <<Byte:1/binary>> <= Data >>.
 
--spec splice_dmx_change(Index :: integer(),
+-spec splice_dmx_change(Index :: [integer()],
                         Changed :: binary(),
                         Data :: binary(),
                         Acc :: binary()) -> ok.
