@@ -27,6 +27,9 @@
 
 -record(state, {uart, options = #{}, dmxin = none}).
 
+-define(USB_PRO_TIMEOUT, 2000).
+-define(DEFAULT_TIMEOUT, 4000).
+
 -type enttec_widget_opts() :: #{device => file:filename()}.
 
 -type enttec_packet_type() ::
@@ -211,7 +214,7 @@ init(#{device := TTY} = Opts) ->
     uart:async_recv(Uart, 4),
     NewOpts = maps:remove(device, Opts),
     NewState = #state{uart = Uart, options = NewOpts},
-    {ok, wait_for_hw_version, NewState, 2000};
+    {ok, wait_for_hw_version, NewState, ?USB_PRO_TIMEOUT};
 
 init(Opts) ->
     Dev = "/dev",
@@ -228,15 +231,15 @@ wait_for_hw_version({from_widget, get_hw_version, _Ver}, State) ->
     uart:send(State#state.uart, AssignPorts),
     {ok, GetParams} = encode_packet(get_parameters2, 0),
     uart:send(State#state.uart, GetParams),
-    {next_state, get_parameters2, State};
+    {next_state, get_parameters2, State, ?DEFAULT_TIMEOUT};
 
 wait_for_hw_version(timeout, State) ->
     {ok, GetParams} = encode_packet(get_parameters, 0),
     uart:send(State#state.uart, GetParams),
-    {next_state, get_parameters, State};
+    {next_state, get_parameters, State, ?DEFAULT_TIMEOUT};
 
 wait_for_hw_version({from_widget, received_dmx, _}, State) ->
-    {next_state, wait_for_hw_version, State}.
+    {next_state, wait_for_hw_version, State, ?USB_PRO_TIMEOUT}.
 
 get_parameters2({from_widget, get_parameters2, Params},
                 #state{options = Opts} = State) ->
@@ -249,10 +252,10 @@ get_parameters2({from_widget, get_parameters2, Params},
     uart:send(State#state.uart, SetParams),
     {ok, GetParams} = encode_packet(get_parameters, 0),
     uart:send(State#state.uart, GetParams),
-    {next_state, get_parameters, State};
+    {next_state, get_parameters, State, ?DEFAULT_TIMEOUT};
 
 get_parameters2({from_widget, received_dmx, _}, State) ->
-    {next_state, get_parameters2, State}.
+    {next_state, get_parameters2, State, ?DEFAULT_TIMEOUT}.
 
 get_parameters({from_widget, get_parameters, Params},
                 #state{options = Opts} = State) ->
@@ -266,7 +269,7 @@ get_parameters({from_widget, get_parameters, Params},
     {next_state, wait_for_dmx, State};
 
 get_parameters({from_widget, received_dmx, _}, State) ->
-    {next_state, get_parameters, State}.
+    {next_state, get_parameters, State, ?DEFAULT_TIMEOUT}.
 
 wait_for_dmx({from_widget, received_dmx, Data}, State) ->
     {ok, ChangeOnly} = encode_packet(receive_dmx_on_change, on_change_only),
