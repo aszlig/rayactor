@@ -18,7 +18,8 @@
 
 -export([to_childspec/1]).
 
--export_type([universe/0, universe_options/0, widget_options/0]).
+-export_type([universe/0, universe_options/0, universe_config/0,
+              widget_options/0]).
 
 -type universe_options() :: #{direction => in | out, port => integer()}.
 
