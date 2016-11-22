@@ -22,17 +22,18 @@
 -export([init/1, handle_event/3, handle_sync_event/4, handle_info/3,
          terminate/3, code_change/4]).
 
--export([wait_for_hw_version/2, wait_for_dmx/2, wait_for_dmx_change/2]).
+-export([wait_for_hw_version/2, get_parameters/2, get_parameters2/2,
+         wait_for_dmx/2, wait_for_dmx_change/2]).
 
--record(state, {uart, dmxin = none}).
+-record(state, {uart, options = #{}, dmxin = none}).
 
 -type enttec_widget_opts() :: #{device => file:filename()}.
 
 -type enttec_packet_type() ::
     assign_ports | change_of_state | flash_page | get_hw_version |
-    get_parameters | get_serial | receive_dmx_on_change | received_dmx |
-    reprogram_firmware | send_dmx | send_dmx2 | send_rdm | send_rdm_discovery |
-    set_parameters.
+    get_parameters | get_parameters2 | get_serial | receive_dmx_on_change |
+    received_dmx | reprogram_firmware | send_dmx | send_dmx2 | send_rdm |
+    send_rdm_discovery | set_parameters | set_parameters2.
 
 -spec start_widget(enttec_widget_opts()) ->
     {ok, pid()} | ignore | {error, term()}.
@@ -53,20 +54,23 @@ send_to_widget(Pid, Type, Data) ->
 
 -spec get_packet_type(integer()) -> enttec_packet_type() | unknown.
 
-get_packet_type(2)  -> flash_page;
-get_packet_type(3)  -> get_parameters;
-get_packet_type(5)  -> received_dmx;
-get_packet_type(9)  -> change_of_state;
-get_packet_type(10) -> get_serial;
-get_packet_type(14) -> get_hw_version;
-get_packet_type(_)  -> unknown.
+get_packet_type(2)   -> flash_page;
+get_packet_type(3)   -> get_parameters;
+get_packet_type(189) -> get_parameters2;
+get_packet_type(5)   -> received_dmx;
+get_packet_type(9)   -> change_of_state;
+get_packet_type(10)  -> get_serial;
+get_packet_type(14)  -> get_hw_version;
+get_packet_type(_)   -> unknown.
 
 -spec put_packet_type(enttec_packet_type()) -> integer() | unknown.
 
 put_packet_type(reprogram_firmware)    -> 1;
 put_packet_type(flash_page)            -> 2;
 put_packet_type(get_parameters)        -> 3;
+put_packet_type(get_parameters2)       -> 189;
 put_packet_type(set_parameters)        -> 4;
+put_packet_type(set_parameters2)       -> 195;
 put_packet_type(send_dmx)              -> 6;
 put_packet_type(send_rdm)              -> 7;
 put_packet_type(receive_dmx_on_change) -> 8;
@@ -89,12 +93,14 @@ decode_packet_data(received_dmx, <<0:7, 1:1, _/binary>>) ->
     {error, queue_overrun};
 decode_packet_data(received_dmx, <<0, S, _/binary>>) when S /= 0 ->
     {error, unknown_start_code};
-decode_packet_data(get_parameters, <<FwVer:16/little, Break, MarkAfterBreak,
-                                     Rate, _/binary>>) ->
+decode_packet_data(T, <<FwVer:16/little, Break, MarkAfterBreak,
+                        Rate, UserData/binary>>) when T =:= get_parameters;
+                                                      T =:= get_parameters2 ->
     {ok, #{firmware_version => FwVer,
            break_time => Break,
            mark_after_break_time => MarkAfterBreak,
-           output_rate => Rate}};
+           output_rate => Rate,
+           user_data => UserData}};
 decode_packet_data(get_hw_version, <<Ver>>) ->
     {ok, Ver};
 decode_packet_data(change_of_state, <<Offset, Index:5/binary, Data/binary>>) ->
@@ -118,9 +124,7 @@ decode_packet(Type, Data) ->
 -spec encode_packet_data(enttec_packet_type(), term()) ->
     {ok, binary()} | {error, term()}.
 
-encode_packet_data(send_dmx, Data) ->
-    {ok, <<0, Data/binary>>};
-encode_packet_data(send_dmx2, Data) ->
+encode_packet_data(T, Data) when T =:= send_dmx; T =:= send_dmx2 ->
     {ok, <<0, Data/binary>>};
 encode_packet_data(assign_ports, {Dunno, Dunno}) ->
     {ok, <<Dunno, Dunno>>};
@@ -128,8 +132,17 @@ encode_packet_data(receive_dmx_on_change, send_always) ->
     {ok, <<0>>};
 encode_packet_data(receive_dmx_on_change, on_change_only) ->
     {ok, <<1>>};
-encode_packet_data(get_parameters, _) ->
-    {ok, <<0:16>>};
+encode_packet_data(T, UserDataSize) when T =:= get_parameters;
+                                         T =:= get_parameters2 ->
+    {ok, <<UserDataSize:16/little>>};
+encode_packet_data(T, Params) when T =:= set_parameters;
+                                   T =:= set_parameters2 ->
+    Break = maps:get(break_time, Params, 9),
+    MAB = maps:get(mark_after_break_time, Params, 1),
+    Rate = maps:get(output_rate, Params, 40),
+    UserData = maps:get(user_data, Params, <<>>),
+    UserSize = byte_size(UserData),
+    {ok, <<UserSize:16/little, Break:8, MAB:8, Rate:8, UserData/binary>>};
 encode_packet_data(enable_api_v2, Key) ->
     {ok, <<Key:32/little>>};
 encode_packet_data(get_hw_version, _) ->
@@ -189,20 +202,22 @@ splice_dmx_change(Index, Changed, Data) ->
 match_ttyusb([$t, $t, $y, $U, $S, $B | _]) -> true;
 match_ttyusb(_)                            -> false.
 
-init(#{device := TTY}) ->
+init(#{device := TTY} = Opts) ->
     {ok, Uart} = uart:open(TTY, [{mode, binary}]),
     {ok, SendFull} = encode_packet(receive_dmx_on_change, send_always),
     uart:send(Uart, SendFull),
     {ok, GetParams} = encode_packet(get_hw_version, none),
     uart:send(Uart, GetParams),
     uart:async_recv(Uart, 4),
-    {ok, wait_for_hw_version, #state{uart = Uart}, 2000};
+    NewOpts = maps:remove(device, Opts),
+    NewState = #state{uart = Uart, options = NewOpts},
+    {ok, wait_for_hw_version, NewState, 2000};
 
-init(_) ->
+init(Opts) ->
     Dev = "/dev",
     {ok, Files} = file:list_dir(Dev),
     Found = hd([filename:join(Dev, F) || F <- Files, match_ttyusb(F)]),
-    init(#{device => Found}).
+    init(Opts#{device => Found}).
 
 wait_for_hw_version({from_widget, get_hw_version, _Ver}, State) ->
     % Permission to publish the API key granted by ENTTEC.
@@ -211,13 +226,47 @@ wait_for_hw_version({from_widget, get_hw_version, _Ver}, State) ->
     uart:send(State#state.uart, EnableApi),
     {ok, AssignPorts} = encode_packet(assign_ports, {1, 1}),
     uart:send(State#state.uart, AssignPorts),
-    {next_state, wait_for_dmx, State};
+    {ok, GetParams} = encode_packet(get_parameters2, 0),
+    uart:send(State#state.uart, GetParams),
+    {next_state, get_parameters2, State};
 
 wait_for_hw_version(timeout, State) ->
+    {ok, GetParams} = encode_packet(get_parameters, 0),
+    uart:send(State#state.uart, GetParams),
+    {next_state, get_parameters, State};
+
+wait_for_hw_version({from_widget, received_dmx, _}, State) ->
+    {next_state, wait_for_hw_version, State}.
+
+get_parameters2({from_widget, get_parameters2, Params},
+                #state{options = Opts} = State) ->
+    ParamsFromOpts = case maps:find(port2_params, Opts) of
+        {ok, P} -> P;
+        error   -> #{}
+    end,
+    NewParams = maps:merge(Params, ParamsFromOpts),
+    {ok, SetParams} = encode_packet(set_parameters2, NewParams),
+    uart:send(State#state.uart, SetParams),
+    {ok, GetParams} = encode_packet(get_parameters, 0),
+    uart:send(State#state.uart, GetParams),
+    {next_state, get_parameters, State};
+
+get_parameters2({from_widget, received_dmx, _}, State) ->
+    {next_state, get_parameters2, State}.
+
+get_parameters({from_widget, get_parameters, Params},
+                #state{options = Opts} = State) ->
+    ParamsFromOpts = case maps:find(port_params, Opts) of
+        {ok, P} -> P;
+        error   -> #{}
+    end,
+    NewParams = maps:merge(Params, ParamsFromOpts),
+    {ok, SetParams} = encode_packet(set_parameters, NewParams),
+    uart:send(State#state.uart, SetParams),
     {next_state, wait_for_dmx, State};
 
-wait_for_hw_version(_, State) ->
-    {next_state, wait_for_hw_version, State}.
+get_parameters({from_widget, received_dmx, _}, State) ->
+    {next_state, get_parameters, State}.
 
 wait_for_dmx({from_widget, received_dmx, Data}, State) ->
     {ok, ChangeOnly} = encode_packet(receive_dmx_on_change, on_change_only),
