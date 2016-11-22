@@ -22,7 +22,7 @@
 -export([init/1]).
 
 -spec start_link([rayactor_config:widget_options()]) ->
-    supervisor:startlink_ret().
+    {ok, pid()} | ignore | {error, term()}.
 
 start_link(Widgets) ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, Widgets).
