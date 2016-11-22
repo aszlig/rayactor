@@ -25,7 +25,7 @@
     {ok, pid()} | ignore | {error, {already_started, pid()} | term()}.
 
 start_link(LSock) ->
-    gen_server:start_link(?MODULE, {LSock, self()}, [{debug, [trace]}]).
+    gen_server:start_link(?MODULE, {LSock, self()}, []).
 
 -spec init({gen_tcp:socket(), pid()}) -> {ok, #{}}.
 

@@ -38,8 +38,7 @@ recv_dmx(Universe) ->
     {ok, pid()} | ignore | {error, {already_started, pid()} | term()}.
 
 start_link() ->
-    gen_server:start_link({local, rayactor_router}, ?MODULE, [],
-                          [{debug, [trace]}]).
+    gen_server:start_link({local, rayactor_router}, ?MODULE, [], []).
 
 -spec init([]) -> {ok, #{}}.
 

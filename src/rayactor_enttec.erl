@@ -38,7 +38,7 @@
     {ok, pid()} | ignore | {error, term()}.
 
 start_widget(Opts) ->
-    gen_fsm:start_link(?MODULE, Opts, [{debug, [trace]}]).
+    gen_fsm:start_link(?MODULE, Opts, []).
 
 -spec dmx_from_router(pid(), integer(), binary()) -> ok | {error, term()}.
 
