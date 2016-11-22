@@ -45,10 +45,17 @@ start_link() ->
 init([]) ->
     {ok, #{outputs => #{}, inputs => #{}, receivers => #{}}}.
 
+handle_info({'DOWN', _, process, Pid, _},
+            #{outputs := Out, inputs := In} = State) ->
+    NewIn = maps:filter(fun ({P, _}, _) -> P =/= Pid end, In),
+    NewOut = maps:filter(fun (_, {_, P, _}) -> P =/= Pid end, Out),
+    {noreply, State#{outputs => NewOut, inputs => NewIn}};
+
 handle_info(_Info, State) ->
     {noreply, State}.
 
 handle_call({register_widget, Mod, Pid, UniCfg}, _, State) ->
+    monitor(process, Pid),
     NewState = maps:fold(fun
         (Name, #{direction := in, port := Port}, #{inputs := In} = Acc) ->
             Acc#{inputs => In#{{Pid, Port} => Name}};
