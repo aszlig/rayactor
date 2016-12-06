@@ -22,10 +22,11 @@
 widget_config() ->
     [#{module => rayactor_enttec,
        universes => #{stage => #{direction => out, port => 2},
-                      licon => #{direction => in, port => 1}}},
-     #{module => rayactor_tcp,
+                      licon => #{direction => in,  port => 1}}},
+     #{module => rayactor_client,
        options => #{port => 4444},
-       universes => #{keyboard => #{direction => in, port => 1}}}].
+       universes => #{keyboard => #{direction => in,  port => 1},
+                      display  => #{direction => out, port => 1}}}].
 
 start(_StartType, _StartArgs) ->
     rayactor_sup:start_link(widget_config()).
