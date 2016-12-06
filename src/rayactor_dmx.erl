@@ -15,7 +15,7 @@
 %%%
 -module(rayactor_dmx).
 
--export([new/0, set/3]).
+-export([new/0, from_binary/1, to_binary/1, set/3]).
 -export_type([dmx/0]).
 
 -type dmx() :: binary().
@@ -24,6 +24,16 @@
 -spec new() -> dmx().
 
 new() -> binary:copy(<<0>>, 512).
+
+-spec from_binary(binary()) -> dmx().
+
+from_binary(<<Bin:512/binary>> = B)
+    when byte_size(B) >= 512 -> Bin;
+from_binary(<<Bin/binary>>)  -> Bin.
+
+-spec to_binary(dmx()) -> binary().
+
+to_binary(Bin) -> Bin.
 
 -spec set(integer(), channel(), dmx()) -> dmx().
 
