@@ -1,0 +1,23 @@
+name:                rayactor-client
+version:             0.1.0.0
+synopsis:            RayActor Lighting Software (client)
+homepage:            https://github.com/aszlig/rayactor
+license:             AGPL-3
+author:              aszlig
+maintainer:          aszlig@redmoonstudios.org
+category:            Network
+build-type:          Simple
+extra-source-files:  ChangeLog.md
+cabal-version:       >=1.10
+
+executable rayactor-client
+  main-is:             Main.hs
+  build-depends:       base >= 4.9 && < 4.10,
+                       bytestring,
+                       elerea,
+                       helm == 1.0.*,
+                       linear,
+                       network == 2.*,
+                       stm
+  default-language:    Haskell2010
+  ghc-options:         -Wall
