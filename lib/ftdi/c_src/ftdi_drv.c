@@ -31,6 +31,9 @@
 #error "You need at least libusb version 1.0.20!"
 #endif
 
+/* Pack the data pointed at buf into an Erlang binary and send it back to the
+ * emulator.
+ */
 static ErlDrvSSizeT ctrl_reply(uint8_t reply, char *buf, ErlDrvSizeT len,
                                char **rbuf, ErlDrvSizeT rlen)
 {
@@ -50,27 +53,41 @@ static ErlDrvSSizeT ctrl_reply(uint8_t reply, char *buf, ErlDrvSizeT len,
     return len + 1;
 }
 
+/* Signal success to the emulator with data following afterwards. */
 static inline ErlDrvSSizeT ctrl_ok(char **rbuf, ErlDrvSizeT rlen)
 {
     return ctrl_reply(FTDI_DRV_CTRL_REPLY_OK, NULL, 0, rbuf, rlen);
 }
 
+/* Signal success to the emulator indicating that no data will follow. */
 static inline ErlDrvSSizeT ctrl_ok_nodata(char **rbuf, ErlDrvSizeT rlen)
 {
     return ctrl_reply(FTDI_DRV_CTRL_REPLY_OK_NODATA, NULL, 0, rbuf, rlen);
 }
 
+/* Simple generic error with a C string returned as an atom. */
 static inline ErlDrvSSizeT ctrl_error(char *err, char **rbuf, ErlDrvSizeT rlen)
 {
     return ctrl_reply(FTDI_DRV_CTRL_REPLY_ERROR, err, strlen(err), rbuf, rlen);
 }
 
+/* Pick up the value of the errno variable and send it as an atom to the
+ * emulator.
+ */
 static ErlDrvSSizeT ctrl_errno(char **rbuf, ErlDrvSizeT rlen)
 {
     char *desc = erl_errno_id(errno);
     return ctrl_error(desc, rbuf, rlen);
 }
 
+/* Create a new device reference (which essentially is the pointer to the
+ * libusb_device structure but as a 64 bit integer) and add it to the list of
+ * device references.
+ *
+ * This is needed because we need a way to identify the device from the emulator
+ * without rediscovering the USB device list and do string matching or other
+ * fishy things.
+ */
 static uint64_t add_device_ref(drv_ctx_t *ctx, struct libusb_device *dev)
 {
     dev_rev_list_t *new, *iter;
@@ -93,6 +110,7 @@ static uint64_t add_device_ref(drv_ctx_t *ctx, struct libusb_device *dev)
     return new->ref;
 }
 
+/* Find the libusb_device corresponding to the given device reference. */
 static struct libusb_device *lookup_device_ref(drv_ctx_t *ctx, uint64_t ref)
 {
     dev_rev_list_t *iter;
@@ -107,6 +125,7 @@ static struct libusb_device *lookup_device_ref(drv_ctx_t *ctx, uint64_t ref)
     return NULL;
 }
 
+/* Frees the device refs directly from the drv_ctx_t structure. */
 static void free_device_refs(drv_ctx_t *ctx)
 {
     dev_rev_list_t *next;
@@ -119,6 +138,14 @@ static void free_device_refs(drv_ctx_t *ctx)
     }
 }
 
+/* Register or unregister a file descriptor with driver_select() so that the
+ * Erlang VM can do select/poll/epoll/whatnot on our behalf and signal readiness
+ * once one of these FDs is ready for read/write.
+ *
+ * The events argument is the same as in the struct pollfd in poll(2).
+ * Whether the event should be registered or unregistered is indicated by the
+ * "on" argument.
+ */
 static int poll_event_ctrl(drv_ctx_t *ctx, int fd, short events, bool on)
 {
     int mode;
@@ -131,6 +158,7 @@ static int poll_event_ctrl(drv_ctx_t *ctx, int fd, short events, bool on)
     return driver_select(ctx->port, event, mode, on ? 1 : 0);
 }
 
+/* Callback for libusb_set_pollfd_notifiers to register a file descriptor. */
 static void LIBUSB_CALL add_poll_event(int fd, short events, void *drv_data)
 {
     if (poll_event_ctrl((drv_ctx_t*)drv_data, fd, events, true) != 0) {
@@ -138,6 +166,7 @@ static void LIBUSB_CALL add_poll_event(int fd, short events, void *drv_data)
     }
 }
 
+/* Callback for libusb_set_pollfd_notifiers to unregister a file descriptor. */
 static void LIBUSB_CALL del_poll_event(int fd, void *drv_data)
 {
     if (poll_event_ctrl((drv_ctx_t*)drv_data, fd,
@@ -146,6 +175,11 @@ static void LIBUSB_CALL del_poll_event(int fd, void *drv_data)
     }
 }
 
+/* This function is called whenever we need to handle data coming from the USB
+ * endpoint and/or control status or timeouts. It's basically a wrapper around
+ * libusb_handle_events_timeout_completed() which calls our custom transfer
+ * handler in transfer.c.
+ */
 static void handle_events(drv_ctx_t *ctx)
 {
     struct timeval tv;
@@ -167,6 +201,12 @@ struct usb_tuple_gc {
     ErlDrvBinary *strings[3];
 };
 
+/* Create a USB device tuple like this:
+ *
+ *   {DeviceRef, Vendor, Product, Manufacturer, Description, Serial}
+ *
+ * The tuple is directly written to the ErlDrvTermData pointer given in "spec".
+ */
 static struct usb_tuple_gc *mk_usb_tuple(drv_ctx_t *ctx,
                                          struct libusb_device *dev,
                                          ErlDrvTermData *spec)
@@ -237,6 +277,7 @@ static struct usb_tuple_gc *mk_usb_tuple(drv_ctx_t *ctx,
     return gc;
 }
 
+/* Discover FTDI devices and send a list of device tuples to the emulator. */
 static ErlDrvSSizeT do_usb_find_all(drv_ctx_t *ctx,
                                     char **rbuf, ErlDrvSizeT rlen)
 {
@@ -290,6 +331,7 @@ static ErlDrvSSizeT do_usb_find_all(drv_ctx_t *ctx,
     return ctrl_ok(rbuf, rlen);
 }
 
+/* Open a specific device based on a device reference. */
 static ErlDrvSSizeT do_open(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
                             char **rbuf, ErlDrvSizeT rlen)
 {
@@ -313,6 +355,7 @@ static ErlDrvSSizeT do_open(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
     return ctrl_ok_nodata(rbuf, rlen);
 }
 
+/* Purge RX/TX or both buffers. */
 static ErlDrvSSizeT do_purge(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
                              char **rbuf, ErlDrvSizeT rlen)
 {
@@ -341,6 +384,7 @@ static ErlDrvSSizeT do_purge(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
     return ctrl_ok_nodata(rbuf, rlen);
 }
 
+/* Called whenever a send operation finishes. */
 static void send_done_cb(unsigned char *buf, size_t len, drv_ctx_t *ctx)
 {
     ErlDrvTermData spec[] = {
@@ -352,6 +396,7 @@ static void send_done_cb(unsigned char *buf, size_t len, drv_ctx_t *ctx)
     erl_drv_output_term(ctx->term_port, spec, sizeof(spec) / sizeof(spec[0]));
 }
 
+/* Send of the given data in buf and don't wait for completion. */
 static ErlDrvSizeT do_send(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
                            char **rbuf, ErlDrvSizeT rlen)
 {
@@ -363,6 +408,7 @@ static ErlDrvSizeT do_send(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
     return ctrl_ok_nodata(rbuf, rlen);
 }
 
+/* Pass data coming from the FTDI device back to the emulator. */
 static void recv_done_cb(unsigned char *buf, size_t len, drv_ctx_t *ctx)
 {
     ErlDrvTermData spec[8];
@@ -386,6 +432,7 @@ static void recv_done_cb(unsigned char *buf, size_t len, drv_ctx_t *ctx)
     driver_free_binary(bin);
 }
 
+/* Send a receive request to the FTDI device and return immediately. */
 static ErlDrvSizeT do_recv(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
                            char **rbuf, ErlDrvSizeT rlen)
 {
@@ -404,6 +451,7 @@ static ErlDrvSizeT do_recv(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
     return ctrl_ok_nodata(rbuf, rlen);
 }
 
+/* Initialize the internal context. */
 static ErlDrvData ftdi_drv_start(ErlDrvPort port, char *command)
 {
     drv_ctx_t *ctx;
@@ -451,6 +499,7 @@ static ErlDrvData ftdi_drv_start(ErlDrvPort port, char *command)
     return (ErlDrvData) ctx;
 }
 
+/* Called when port is closed or the emulator is halted. */
 static void ftdi_drv_stop(ErlDrvData drv_data)
 {
     drv_ctx_t *ctx = (drv_ctx_t*)drv_data;
@@ -460,6 +509,7 @@ static void ftdi_drv_stop(ErlDrvData drv_data)
     driver_free(ctx);
 }
 
+/* Callback for port_control/3, this is essentially our dispatcher. */
 static ErlDrvSSizeT ftdi_drv_control(ErlDrvData drv_data, unsigned int cmd,
                                      char *buf, ErlDrvSizeT len, char **rbuf,
                                      ErlDrvSizeT rlen)

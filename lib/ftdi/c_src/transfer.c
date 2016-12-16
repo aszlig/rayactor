@@ -31,6 +31,7 @@ typedef struct _transfer_list_node {
     struct _transfer_list_node *next;
 } transfer_list_t;
 
+/* Add a pending transfer as a list node to ctx->transfers. */
 static int add_transfer(drv_ctx_t *ctx, transfer_t *transfer)
 {
     transfer_list_t *new;
@@ -50,6 +51,7 @@ static int add_transfer(drv_ctx_t *ctx, transfer_t *transfer)
     return 0;
 }
 
+/* Remove a list node frem the ctx->transfers list. */
 static transfer_list_t *remove_node(drv_ctx_t *ctx, transfer_list_t *node)
 {
     transfer_list_t *tmp;
@@ -67,6 +69,7 @@ static transfer_list_t *remove_node(drv_ctx_t *ctx, transfer_list_t *node)
     return tmp;
 }
 
+/* Free a specific transfer list node. */
 static void free_transfer(transfer_t *transfer)
 {
     libusb_free_transfer(transfer->tc->transfer);
@@ -74,6 +77,7 @@ static void free_transfer(transfer_t *transfer)
     driver_free(transfer);
 }
 
+/* Clean up the ctx->transfers list. */
 void transfer_list_free(transfer_list_t *transfers)
 {
     while (transfers != NULL) {
@@ -85,6 +89,9 @@ void transfer_list_free(transfer_list_t *transfers)
     }
 }
 
+/* Generic transfer handler, which iterates through the transfer list and calls
+ * the notifier function if a particular transfer has completed.
+ */
 void transfer_handle(drv_ctx_t *ctx)
 {
     transfer_list_t *iter;
@@ -107,6 +114,13 @@ void transfer_handle(drv_ctx_t *ctx)
     }
 }
 
+/* Submit a new receive request to the FTDI device and don't wait for
+ * completion.
+ *
+ * The received data is later picked up by transfer_handle() which calls the
+ * notifier callback passed here with the data that has been received from the
+ * device.
+ */
 int transfer_recv(drv_ctx_t *ctx, size_t len, notifier_cb notifier)
 {
     transfer_t *new;
@@ -139,6 +153,12 @@ int transfer_recv(drv_ctx_t *ctx, size_t len, notifier_cb notifier)
     return 0;
 }
 
+/* Send data in buf to the FTDI device and don't wait for completion.
+ *
+ * The transfer_handle() which calls the notifier function once the data has
+ * been sent to the device. Note that the notifier callback gets a NULL pointer
+ * in its buf argument.
+ */
 int transfer_send(drv_ctx_t *ctx, unsigned char *buf, size_t len,
                   notifier_cb notifier)
 {
