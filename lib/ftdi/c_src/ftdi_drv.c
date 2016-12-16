@@ -535,8 +535,8 @@ static void ftdi_drv_stop(ErlDrvData drv_data)
 {
     drv_ctx_t *ctx = (drv_ctx_t*)drv_data;
     free_device_refs(ctx);
-    transfer_list_free(ctx->transfers);
     ftdi_free(ctx->ftdi_ctx);
+    transfer_list_free(ctx->transfers);
     driver_free(ctx);
 }
 

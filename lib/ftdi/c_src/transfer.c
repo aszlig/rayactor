@@ -83,7 +83,6 @@ void transfer_list_free(transfer_list_t *transfers)
 {
     while (transfers != NULL) {
         transfer_list_t *next = transfers->next;
-        //libusb_cancel_transfer(transfers->transfer->tc->transfer);
         free_transfer(transfers->transfer);
         driver_free(transfers);
         transfers = next;
