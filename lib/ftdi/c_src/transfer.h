@@ -18,11 +18,11 @@
 
 #include "context.h"
 
-typedef void (*notifier_cb)(unsigned char *buf, size_t len, drv_ctx_t *ctx);
+typedef void (*notifier_cb)(uint64_t, unsigned char*, size_t, drv_ctx_t*);
 
 void transfer_list_free(transfer_list_t*);
 void transfer_handle(drv_ctx_t*);
-int transfer_recv(drv_ctx_t*, size_t, notifier_cb);
-int transfer_send(drv_ctx_t*, unsigned char *buf, size_t, notifier_cb);
+uint64_t transfer_recv(drv_ctx_t*, size_t, notifier_cb);
+uint64_t transfer_send(drv_ctx_t*, unsigned char*, size_t, notifier_cb);
 
 #endif

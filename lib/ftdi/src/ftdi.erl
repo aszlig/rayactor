@@ -68,18 +68,14 @@ purge(Handle, Method) ->
 
 purge(Handle) -> purge(Handle, both).
 
--spec send(handle(), binary()) -> ok.
+-spec send(handle(), binary()) ->
+    {ok, Reference :: integer()} | {error, term()}.
 
 send(Handle, Data) ->
-    ctrl(Handle, ?FTDI_DRV_CTRL_REQUEST_SEND, Data),
-    % XXX: Split into sync/async!
-    receive
-        {ftdi, write_done} -> ok
-    after
-        1000 -> {error, timeout}
-    end.
+    ctrl(Handle, ?FTDI_DRV_CTRL_REQUEST_SEND, Data).
 
--spec recv(handle(), integer()) -> ok.
+-spec recv(handle(), integer()) ->
+    {ok, Reference :: integer()} | {error, term()}.
 
 recv(Handle, Size) ->
     ctrl(Handle, ?FTDI_DRV_CTRL_REQUEST_RECV,
@@ -114,6 +110,8 @@ ctrl(Port, OpCode, Msg) ->
             {error, binary_to_atom(Err, latin1)};
         <<?FTDI_DRV_CTRL_REPLY_UNKNOWN>> ->
             {error, unknown_command};
+        <<?FTDI_DRV_CTRL_REPLY_REF, Ref:64/native-unsigned-integer>> ->
+            {ok, Ref};
         <<?FTDI_DRV_CTRL_REPLY_OK_NODATA>> -> ok;
         <<?FTDI_DRV_CTRL_REPLY_OK>> ->
             receive

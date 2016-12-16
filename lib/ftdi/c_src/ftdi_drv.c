@@ -65,6 +65,14 @@ static inline ErlDrvSSizeT ctrl_ok_nodata(char **rbuf, ErlDrvSizeT rlen)
     return ctrl_reply(FTDI_DRV_CTRL_REPLY_OK_NODATA, NULL, 0, rbuf, rlen);
 }
 
+/* Signal success with a reference integer. */
+static inline ErlDrvSSizeT ctrl_ref(uint64_t ref, char **rbuf,
+                                    ErlDrvSizeT rlen)
+{
+    return ctrl_reply(FTDI_DRV_CTRL_REPLY_REF,
+                      (char*)&ref, sizeof(uint64_t), rbuf, rlen);
+}
+
 /* Simple generic error with a C string returned as an atom. */
 static inline ErlDrvSSizeT ctrl_error(char *err, char **rbuf, ErlDrvSizeT rlen)
 {
@@ -385,70 +393,93 @@ static ErlDrvSSizeT do_purge(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
 }
 
 /* Called whenever a send operation finishes. */
-static void send_done_cb(unsigned char *buf, size_t len, drv_ctx_t *ctx)
+static void send_done_cb(uint64_t ref, unsigned char *buf, size_t len,
+                         drv_ctx_t *ctx)
 {
+    ErlDrvUInt64 *eref;
+
+    if ((eref = driver_alloc(sizeof(ErlDrvUInt64))) == NULL)
+        return; // TODO: Error handling!
+
+    memcpy(eref, &ref, sizeof(ErlDrvUInt64));
+
     ErlDrvTermData spec[] = {
         ERL_DRV_ATOM, driver_mk_atom("ftdi"),
-        ERL_DRV_ATOM, driver_mk_atom("write_done"),
-        ERL_DRV_TUPLE, 2
+        ERL_DRV_ATOM, driver_mk_atom("send"),
+        ERL_DRV_UINT64, (ErlDrvTermData)eref,
+        ERL_DRV_TUPLE, 3
     };
 
     erl_drv_output_term(ctx->term_port, spec, sizeof(spec) / sizeof(spec[0]));
+
+    driver_free(eref);
 }
 
 /* Send of the given data in buf and don't wait for completion. */
 static ErlDrvSizeT do_send(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
                            char **rbuf, ErlDrvSizeT rlen)
 {
-    if (transfer_send(ctx, (unsigned char*)buf, len, send_done_cb) != 0)
+    uint64_t ref;
+
+    if ((ref = transfer_send(ctx, (unsigned char*)buf,
+                             len, send_done_cb)) == 0)
         return ctrl_errno(rbuf, rlen);
 
     handle_events(ctx);
 
-    return ctrl_ok_nodata(rbuf, rlen);
+    return ctrl_ref(ref, rbuf, rlen);
 }
 
 /* Pass data coming from the FTDI device back to the emulator. */
-static void recv_done_cb(unsigned char *buf, size_t len, drv_ctx_t *ctx)
+static void recv_done_cb(uint64_t ref, unsigned char *buf, size_t len,
+                         drv_ctx_t *ctx)
 {
-    ErlDrvTermData spec[8];
+    ErlDrvUInt64 *eref;
     ErlDrvBinary *bin;
 
-    if ((bin = driver_alloc_binary(len)) == NULL)
+    if ((eref = driver_alloc(sizeof(ErlDrvUInt64))) == NULL)
         return; // TODO: Error handling!
+
+    memcpy(eref, &ref, sizeof(ErlDrvUInt64));
+
+    if ((bin = driver_alloc_binary(len)) == NULL) {
+        driver_free(eref);
+        return; // TODO: Error handling!
+    }
 
     memcpy(bin->orig_bytes, buf, len);
 
-    spec[0] = ERL_DRV_ATOM;
-    spec[1] = driver_mk_atom("ftdi");
-    spec[2] = ERL_DRV_BINARY;
-    spec[3] = (ErlDrvTermData)bin;
-    spec[4] = len;
-    spec[5] = 0;
-    spec[6] = ERL_DRV_TUPLE;
-    spec[7] = 2;
+    ErlDrvTermData spec[] = {
+        ERL_DRV_ATOM, driver_mk_atom("ftdi"),
+        ERL_DRV_ATOM, driver_mk_atom("recv"),
+        ERL_DRV_UINT64, (ErlDrvTermData)eref,
+        ERL_DRV_BINARY, (ErlDrvTermData)bin, len, 0,
+        ERL_DRV_TUPLE, 4
+    };
 
-    erl_drv_output_term(ctx->term_port, spec, 8);
+    erl_drv_output_term(ctx->term_port, spec, sizeof(spec) / sizeof(spec[0]));
+
     driver_free_binary(bin);
+    driver_free(eref);
 }
 
 /* Send a receive request to the FTDI device and return immediately. */
 static ErlDrvSizeT do_recv(drv_ctx_t *ctx, char *buf, ErlDrvSizeT len,
                            char **rbuf, ErlDrvSizeT rlen)
 {
-    uint64_t size;
+    uint64_t size, ref;
 
     if (len < 8)
         return ctrl_error("einval", rbuf, rlen);
 
     memcpy(&size, buf, sizeof(uint64_t));
 
-    if (transfer_recv(ctx, size, recv_done_cb) != 0)
+    if ((ref = transfer_recv(ctx, size, recv_done_cb)) == 0)
         return ctrl_errno(rbuf, rlen);
 
     handle_events(ctx);
 
-    return ctrl_ok_nodata(rbuf, rlen);
+    return ctrl_ref(ref, rbuf, rlen);
 }
 
 /* Initialize the internal context. */

@@ -21,6 +21,7 @@
 typedef struct {
     unsigned char *buf;
     size_t len;
+    uint64_t ref;
     notifier_cb notifier;
     struct ftdi_transfer_control *tc;
 } transfer_t;
@@ -105,7 +106,8 @@ void transfer_handle(drv_ctx_t *ctx)
         transfer_t *transfer = iter->transfer;
 
         if (transfer->tc->completed) {
-            transfer->notifier(transfer->buf, transfer->len, ctx);
+            transfer->notifier(transfer->ref, transfer->buf, transfer->len,
+                               ctx);
             free_transfer(transfer);
             iter = remove_node(ctx, iter);
         } else {
@@ -121,36 +123,37 @@ void transfer_handle(drv_ctx_t *ctx)
  * notifier callback passed here with the data that has been received from the
  * device.
  */
-int transfer_recv(drv_ctx_t *ctx, size_t len, notifier_cb notifier)
+uint64_t transfer_recv(drv_ctx_t *ctx, size_t len, notifier_cb notifier)
 {
     transfer_t *new;
 
     if ((new = driver_alloc(sizeof(transfer_t))) == NULL)
-        return -1;
+        return 0;
 
     if ((new->buf = driver_alloc(len)) == NULL) {
         driver_free(new);
-        return -1;
+        return 0;
     }
 
     if ((new->tc = ftdi_read_data_submit(ctx->ftdi_ctx,
                                          new->buf, len)) == NULL) {
         driver_free(new->buf);
         driver_free(new);
-        return -1;
+        return 0;
     }
 
     new->len = len;
     new->notifier = notifier;
+    new->ref = (uint64_t)new;
 
     if (add_transfer(ctx, new) != 0) {
         driver_free(new->buf);
         libusb_cancel_transfer(new->tc->transfer);
         driver_free(new);
-        return -1;
+        return 0;
     }
 
-    return 0;
+    return new->ref;
 }
 
 /* Send data in buf to the FTDI device and don't wait for completion.
@@ -159,28 +162,29 @@ int transfer_recv(drv_ctx_t *ctx, size_t len, notifier_cb notifier)
  * been sent to the device. Note that the notifier callback gets a NULL pointer
  * in its buf argument.
  */
-int transfer_send(drv_ctx_t *ctx, unsigned char *buf, size_t len,
-                  notifier_cb notifier)
+uint64_t transfer_send(drv_ctx_t *ctx, unsigned char *buf, size_t len,
+                       notifier_cb notifier)
 {
     transfer_t *new;
 
     if ((new = driver_alloc(sizeof(transfer_t))) == NULL)
-        return -1;
+        return 0;
 
     if ((new->tc = ftdi_write_data_submit(ctx->ftdi_ctx, buf, len)) == NULL) {
         driver_free(new);
-        return -1;
+        return 0;
     }
 
     new->buf = NULL;
     new->len = len;
     new->notifier = notifier;
+    new->ref = (uint64_t)new;
 
     if (add_transfer(ctx, new) != 0) {
         libusb_cancel_transfer(new->tc->transfer);
         driver_free(new);
-        return -1;
+        return 0;
     }
 
-    return 0;
+    return new->ref;
 }
