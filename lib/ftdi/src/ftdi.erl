@@ -115,7 +115,7 @@ ctrl(Port, OpCode, Msg) ->
         <<?FTDI_DRV_CTRL_REPLY_OK_NODATA>> -> ok;
         <<?FTDI_DRV_CTRL_REPLY_OK>> ->
             receive
-                Data -> {ok, Data}
+                {ftdi, device_list, Data} -> {ok, Data}
             after
                 1000 -> {error, timeout}
             end

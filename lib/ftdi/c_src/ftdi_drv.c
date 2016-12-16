@@ -297,7 +297,7 @@ static ErlDrvSSizeT do_usb_find_all(drv_ctx_t *ctx,
     if ((len = ftdi_usb_find_all(ctx->ftdi_ctx, &devlist, 0, 0)) < 0)
         return ctrl_errno(rbuf, rlen);
 
-    speclen = len * USB_TUPLE_LEN + 3;
+    speclen = len * USB_TUPLE_LEN + 9;
     spec = specptr = driver_alloc(speclen * sizeof(ErlDrvTermData));
     if (spec == NULL) {
         ftdi_list_free(&devlist);
@@ -310,6 +310,11 @@ static ErlDrvSSizeT do_usb_find_all(drv_ctx_t *ctx,
         return ctrl_errno(rbuf, rlen);
     }
 
+    *specptr++ = ERL_DRV_ATOM;
+    *specptr++ = driver_mk_atom("ftdi");
+    *specptr++ = ERL_DRV_ATOM;
+    *specptr++ = driver_mk_atom("device_list");
+
     for (i = 0, failed = 0, devp = devlist, gcptr = gc; i < len;
          ++i, devp = devp->next, ++gcptr) {
         if ((*gcptr = mk_usb_tuple(ctx, devp->dev, specptr)) == NULL)
@@ -320,7 +325,9 @@ static ErlDrvSSizeT do_usb_find_all(drv_ctx_t *ctx,
 
     *specptr++ = ERL_DRV_NIL;
     *specptr++ = ERL_DRV_LIST;
-    *specptr = (len - failed) + 1;
+    *specptr++ = (len - failed) + 1;
+    *specptr++ = ERL_DRV_TUPLE;
+    *specptr = 3;
 
     erl_drv_output_term(ctx->term_port, spec,
                         speclen - (failed * USB_TUPLE_LEN));
