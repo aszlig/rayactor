@@ -44,7 +44,10 @@ open(Handle, #{ref := Ref}) ->
 
 -spec close(handle()) -> ok.
 
-close(Handle) -> catch erlang:port_close(Handle), ok.
+close(Handle) ->
+    clear_mbox(),
+    catch erlang:port_close(Handle),
+    ok.
 
 -spec list_devices(handle()) -> {ok, device()} | {error, atom()}.
 
@@ -119,4 +122,15 @@ ctrl(Port, OpCode, Msg) ->
             after
                 1000 -> {error, timeout}
             end
+    end.
+
+-spec clear_mbox() -> ok.
+
+clear_mbox() ->
+    receive
+        {ftdi, send, _}        -> clear_mbox();
+        {ftdi, recv, _, _}     -> clear_mbox();
+        {ftdi, device_list, _} -> clear_mbox()
+    after
+        0 -> ok
     end.
