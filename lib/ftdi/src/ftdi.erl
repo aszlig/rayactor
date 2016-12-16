@@ -17,7 +17,7 @@
 -include("ftdi.hrl").
 
 -export([new/0, list_devices/1, open/2, close/1, purge/1, purge/2,
-         send/2, recv/2]).
+         send/2, sync_send/2, recv/2, sync_recv/2]).
 -export_type([handle/0, device/0]).
 
 -type handle() :: port().
@@ -77,12 +77,34 @@ purge(Handle) -> purge(Handle, both).
 send(Handle, Data) ->
     ctrl(Handle, ?FTDI_DRV_CTRL_REQUEST_SEND, Data).
 
+-spec sync_send(handle(), binary()) -> ok | {error, term()}.
+
+sync_send(Handle, Data) ->
+    case send(Handle, Data) of
+        {ok, Ref} ->
+            receive
+                {ftdi, send, Ref} -> ok
+            end;
+        {error, Err} -> {error, Err}
+    end.
+
 -spec recv(handle(), integer()) ->
     {ok, Reference :: integer()} | {error, term()}.
 
 recv(Handle, Size) ->
     ctrl(Handle, ?FTDI_DRV_CTRL_REQUEST_RECV,
          <<Size:64/native-unsigned-integer>>).
+
+-spec sync_recv(handle(), integer()) -> {ok, binary()} | {error, term()}.
+
+sync_recv(Handle, Size) ->
+    case recv(Handle, Size) of
+        {ok, Ref} ->
+            receive
+                {ftdi, recv, Ref, Data} -> {ok, Data}
+            end;
+        {error, Err} -> {error, Err}
+    end.
 
 %% Internal functions and types
 
