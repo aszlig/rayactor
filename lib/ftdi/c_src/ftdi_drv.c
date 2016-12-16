@@ -119,7 +119,7 @@ static void free_device_refs(drv_ctx_t *ctx)
     }
 }
 
-static int poll_event_ctrl(drv_ctx_t *ctx, int fd, short events, int on)
+static int poll_event_ctrl(drv_ctx_t *ctx, int fd, short events, bool on)
 {
     int mode;
     ErlDrvEvent event;
@@ -128,19 +128,20 @@ static int poll_event_ctrl(drv_ctx_t *ctx, int fd, short events, int on)
          | (events & POLLOUT ? ERL_DRV_WRITE : 0);
     event = (ErlDrvEvent)(ErlDrvSInt)fd;
 
-    return driver_select(ctx->port, event, mode, on);
+    return driver_select(ctx->port, event, mode, on ? 1 : 0);
 }
 
 static void LIBUSB_CALL add_poll_event(int fd, short events, void *drv_data)
 {
-    if (poll_event_ctrl((drv_ctx_t*)drv_data, fd, events, 1) != 0) {
+    if (poll_event_ctrl((drv_ctx_t*)drv_data, fd, events, true) != 0) {
         // TODO: error handling!
     }
 }
 
 static void LIBUSB_CALL del_poll_event(int fd, void *drv_data)
 {
-    if (poll_event_ctrl((drv_ctx_t*)drv_data, fd, POLLIN | POLLOUT, 0) != 0) {
+    if (poll_event_ctrl((drv_ctx_t*)drv_data, fd,
+                        POLLIN | POLLOUT, false) != 0) {
         // TODO: error handling!
     }
 }
