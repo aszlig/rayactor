@@ -10,13 +10,19 @@ ERL_INTERFACE_LIB_DIR ?= $(call einfo,code:lib_dir(erl_interface, lib))
 SOURCES = $(wildcard *.c)
 OBJECTS = $(patsubst %.c,%.o,$(SOURCES))
 
-CFLAGS += -O3 -std=c11 -finline-functions -Wall -Wstrict-prototypes -fPIC
+CFLAGS += -std=c11 -Wall -Wstrict-prototypes -fPIC
 CFLAGS += -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR)
 CFLAGS += `pkg-config --cflags libftdi1`
 
 LDFLAGS += -shared `pkg-config --libs libftdi1`
 
 OUTPUT = $(CURDIR)/../priv/ftdi_drv.so
+
+all: CFLAGS += -O3 -finline-functions
+all: $(OUTPUT)
+
+debug: CFLAGS += -ggdb
+debug: $(OUTPUT)
 
 $(OUTPUT): $(OBJECTS)
 	mkdir -p $(dir $@)
