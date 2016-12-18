@@ -25,12 +25,12 @@
 -export([wait_for_hw_version/2, get_parameters/2, get_parameters2/2,
          wait_for_dmx/2, wait_for_dmx_change/2]).
 
--record(state, {uart, options = #{}, dmxin = none}).
+-record(state, {ftdi, options = #{}, dmxin = none, header = none}).
 
 -define(USB_PRO_TIMEOUT, 2000).
 -define(DEFAULT_TIMEOUT, 4000).
 
--type enttec_widget_opts() :: #{device => file:filename()}.
+-type enttec_widget_opts() :: #{serial => binary()}.
 
 -type enttec_packet_type() ::
     assign_ports | change_of_state | flash_page | get_hw_version |
@@ -200,42 +200,51 @@ splice_dmx_change(Index, Changed, Data) ->
     splice_dmx_change([I || <<I:1>> <= reverse_bits(Index)],
                       Changed, Data, <<>>).
 
--spec match_ttyusb(file:filename()) -> boolean().
+-spec match_device(enttec_widget_opts(), ftdi:device()) -> boolean().
 
-match_ttyusb([$t, $t, $y, $U, $S, $B | _]) -> true;
-match_ttyusb(_)                            -> false.
-
-init(#{device := TTY} = Opts) ->
-    {ok, Uart} = uart:open(TTY, [{mode, binary}]),
-    {ok, SendFull} = encode_packet(receive_dmx_on_change, send_always),
-    uart:send(Uart, SendFull),
-    {ok, GetParams} = encode_packet(get_hw_version, none),
-    uart:send(Uart, GetParams),
-    uart:async_recv(Uart, 4),
-    NewOpts = maps:remove(device, Opts),
-    NewState = #state{uart = Uart, options = NewOpts},
-    {ok, wait_for_hw_version, NewState, ?USB_PRO_TIMEOUT};
+match_device(Opts, #{manufacturer := <<"ENTTEC">>,
+                     description := <<"DMX USB PRO", _/binary>>,
+                     serial := Serial}) ->
+    case maps:get(serial, Opts, none) of
+        none   -> true;
+        Serial -> true;
+        _      -> false
+    end.
 
 init(Opts) ->
-    Dev = "/dev",
-    {ok, Files} = file:list_dir(Dev),
-    Found = hd([filename:join(Dev, F) || F <- Files, match_ttyusb(F)]),
-    init(Opts#{device => Found}).
+    {ok, Ftdi} = ftdi:new(),
+
+    {ok, Devices} = ftdi:list_devices(Ftdi),
+
+    [Dev|_] = lists:filter(fun(D) -> match_device(Opts, D) end, Devices),
+
+    ok = ftdi:open(Ftdi, Dev),
+
+    {ok, SendFull} = encode_packet(receive_dmx_on_change, send_always),
+    ftdi:sync_send(Ftdi, SendFull),
+    {ok, GetParams} = encode_packet(get_hw_version, none),
+
+    ftdi:purge(Ftdi, rx),
+    ftdi:sync_send(Ftdi, GetParams),
+
+    ftdi:recv(Ftdi, 4),
+    NewState = #state{ftdi = Ftdi, options = Opts},
+    {ok, wait_for_hw_version, NewState, ?USB_PRO_TIMEOUT}.
 
 wait_for_hw_version({from_widget, get_hw_version, _Ver}, State) ->
     % Permission to publish the API key granted by ENTTEC.
     % Ticket reference: EU #DQA-88617-214
     {ok, EnableApi} = encode_packet(enable_api_v2, 16#BFC77FA4),
-    uart:send(State#state.uart, EnableApi),
+    ftdi:sync_send(State#state.ftdi, EnableApi),
     {ok, AssignPorts} = encode_packet(assign_ports, {1, 1}),
-    uart:send(State#state.uart, AssignPorts),
+    ftdi:sync_send(State#state.ftdi, AssignPorts),
     {ok, GetParams} = encode_packet(get_parameters2, 0),
-    uart:send(State#state.uart, GetParams),
+    ftdi:sync_send(State#state.ftdi, GetParams),
     {next_state, get_parameters2, State, ?DEFAULT_TIMEOUT};
 
 wait_for_hw_version(timeout, State) ->
     {ok, GetParams} = encode_packet(get_parameters, 0),
-    uart:send(State#state.uart, GetParams),
+    ftdi:sync_send(State#state.ftdi, GetParams),
     {next_state, get_parameters, State, ?DEFAULT_TIMEOUT};
 
 wait_for_hw_version({from_widget, received_dmx, _}, State) ->
@@ -249,9 +258,9 @@ get_parameters2({from_widget, get_parameters2, Params},
     end,
     NewParams = maps:merge(Params, ParamsFromOpts),
     {ok, SetParams} = encode_packet(set_parameters2, NewParams),
-    uart:send(State#state.uart, SetParams),
+    ftdi:sync_send(State#state.ftdi, SetParams),
     {ok, GetParams} = encode_packet(get_parameters, 0),
-    uart:send(State#state.uart, GetParams),
+    ftdi:sync_send(State#state.ftdi, GetParams),
     {next_state, get_parameters, State, ?DEFAULT_TIMEOUT};
 
 get_parameters2({from_widget, received_dmx, _}, State) ->
@@ -265,7 +274,7 @@ get_parameters({from_widget, get_parameters, Params},
     end,
     NewParams = maps:merge(Params, ParamsFromOpts),
     {ok, SetParams} = encode_packet(set_parameters, NewParams),
-    uart:send(State#state.uart, SetParams),
+    ftdi:sync_send(State#state.ftdi, SetParams),
     {next_state, wait_for_dmx, State};
 
 get_parameters({from_widget, received_dmx, _}, State) ->
@@ -273,7 +282,7 @@ get_parameters({from_widget, received_dmx, _}, State) ->
 
 wait_for_dmx({from_widget, received_dmx, Data}, State) ->
     {ok, ChangeOnly} = encode_packet(receive_dmx_on_change, on_change_only),
-    uart:send(State#state.uart, ChangeOnly),
+    ftdi:sync_send(State#state.ftdi, ChangeOnly),
     Padding = binary:copy(<<0>>, 512 - byte_size(Data)),
     FullData = <<Data/binary, Padding/binary>>,
     rayactor_widget:send_dmx(1, FullData),
@@ -293,7 +302,7 @@ wait_for_dmx_change({from_widget, change_of_state, {Offset, Index, Data}},
 
 handle_event({send_to_widget, Type, Data}, StateName, State) ->
     {ok, Raw} = encode_packet(Type, Data),
-    uart:send(State#state.uart, Raw),
+    ftdi:sync_send(State#state.ftdi, Raw),
     {next_state, StateName, State};
 
 handle_event(_Event, StateName, State) ->
@@ -302,31 +311,31 @@ handle_event(_Event, StateName, State) ->
 handle_sync_event(_Event, _From, StateName, State) ->
     {next_state, StateName, State}.
 
-handle_info({uart_async, Uart, _Ref, <<16#7E, _, Len:16/little>> = Header},
-            StateName, #state{uart = Uart} = State) ->
-    uart:unrecv(State#state.uart, Header),
-    uart:async_recv(State#state.uart, Len + 5),
-    {next_state, StateName, State};
+handle_info({ftdi, recv, _Ref, <<16#7E, Type, Len:16/little>>}, StateName,
+            #state{header = none} = State) ->
+    ftdi:recv(State#state.ftdi, Len + 1),
+    {next_state, StateName, State#state{header = {Type, Len}}};
 
-handle_info({uart_async, Uart, _Ref, <<16#7E, Type, Len:16/little,
-                                       Data:Len/binary, 16#E7>>},
-            StateName, #state{uart = Uart} = State) ->
+handle_info({ftdi, recv, _Ref, FullData}, StateName,
+            #state{header = {Type, Len}} = State)
+        when byte_size(FullData) == Len + 1 ->
+    <<Data:Len/binary, 16#E7>> = FullData,
     Event = case decode_packet(Type, Data) of
         {ok, DType, DData} -> {from_widget, DType, DData};
         {error, Error}     -> {widget_error, Error}
     end,
-    uart:async_recv(Uart, 4),
-    ?MODULE:StateName(Event, State);
+    ftdi:recv(State#state.ftdi, 4),
+    ?MODULE:StateName(Event, State#state{header = none});
 
-handle_info({uart_async, Uart, _Ref, {error, Err}}, _StateName,
-            #state{uart = Uart} = State) ->
-    {stop, {widget_error, Err}, State};
+%handle_info({uart_async, Uart, _Ref, {error, Err}}, _StateName,
+%            #state{ftdi = Ftdi} = State) ->
+%    {stop, {widget_error, Err}, State};
 
 handle_info(_Info, StateName, State) ->
     {next_state, StateName, State}.
 
-terminate(_Reason, _StateName, #state{uart = Uart}) ->
-    uart:close(Uart),
+terminate(_Reason, _StateName, #state{ftdi = Ftdi}) ->
+    ftdi:close(Ftdi),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
