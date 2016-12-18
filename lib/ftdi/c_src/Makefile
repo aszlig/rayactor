@@ -7,8 +7,14 @@ ERTS_INCLUDE_DIR ?= $(ERTS_ROOT)/erts-$(ERTS_VERSION)/include
 ERL_INTERFACE_INCLUDE_DIR ?= $(call einfo,code:lib_dir(erl_interface, include))
 ERL_INTERFACE_LIB_DIR ?= $(call einfo,code:lib_dir(erl_interface, lib))
 
+REBAR_DEPS_DIR ?= ../..
+BUILDOUT = $(REBAR_DEPS_DIR)/ftdi
+
+OBJECT_DIR = $(BUILDOUT)/c_obj
+TARGET_DIR = $(BUILDOUT)/priv
+
 SOURCES = $(wildcard *.c)
-OBJECTS = $(patsubst %.c,%.o,$(SOURCES))
+OBJECTS = $(patsubst %.c,$(OBJECT_DIR)/%.o,$(SOURCES))
 
 CFLAGS += -std=c11 -Wall -Wstrict-prototypes -fPIC
 CFLAGS += -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR)
@@ -16,7 +22,7 @@ CFLAGS += `pkg-config --cflags libftdi1`
 
 LDFLAGS += -shared `pkg-config --libs libftdi1`
 
-OUTPUT = $(CURDIR)/../priv/ftdi_drv.so
+OUTPUT = $(TARGET_DIR)/ftdi_drv.so
 
 all: CFLAGS += -O3 -finline-functions
 all: $(OUTPUT)
@@ -25,11 +31,16 @@ debug: CFLAGS += -ggdb
 debug: $(OUTPUT)
 
 $(OUTPUT): $(OBJECTS)
-	mkdir -p $(dir $@)
+	@[ ! -L $(TARGET_DIR) ] || unlink $(TARGET_DIR)
+	@mkdir -p $(TARGET_DIR)
 	$(CC) $(LDFLAGS) -o $@ $^
 
-ftdi_drv.o: ftdi_drv.h context.h transfer.h
-transfer.o: context.h transfer.h
+$(OBJECT_DIR)/%.o: %.c
+	@mkdir -p $(OBJECT_DIR)
+	$(CC) -c $(CFLAGS) $(CPPFLAGS) -o $@ $<
+
+$(OBJECT_DIR)/ftdi_drv.o: ftdi_drv.h context.h transfer.h
+$(OBJECT_DIR)/transfer.o: context.h transfer.h
 
 ftdi_drv.h: $(CURDIR)/../src/ftdi.hrl
 	sed -n 's/^-define( *\([A-Z0-9_]\+\) *, *\([^ )]\+\).*/#define \1 \2/p' \
