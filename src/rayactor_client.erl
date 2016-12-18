@@ -38,8 +38,6 @@ start_widget(Opts) ->
     Address = maps:get(address, Opts, {127,0,0,1}),
     gen_server:start_link(?MODULE, {Port, Address}, []).
 
--spec init({inet:ip_address(), inet:port_number()}) -> {ok, #{}}.
-
 init({Port, Address}) ->
     {ok, Sock} = gen_udp:open(Port, [binary, {ip, Address},
                                      {active, once},
@@ -49,7 +47,7 @@ init({Port, Address}) ->
 handle_info({udp, Socket, Addr, Port, Raw},
             #{sock := Socket, clients := Clients} = State) ->
     NewClients = case rayactor_client_protocol:handle(Raw) of
-        close -> sets:del_element({Addr, Port});
+        close -> sets:del_element({Addr, Port}, Clients);
         noreply -> sets:add_element({Addr, Port}, Clients);
         {send_dmx, Data} ->
             rayactor_widget:send_dmx(1, Data),

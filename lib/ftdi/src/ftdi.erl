@@ -108,7 +108,8 @@ sync_recv(Handle, Size) ->
 
 %% Internal functions and types
 
--type devtuple() :: {Vendor :: integer(),
+-type devtuple() :: {Reference :: integer(),
+                     Vendor :: integer(),
                      Product :: integer(),
                      Manufacturer :: binary(),
                      Description :: binary(),
@@ -123,11 +124,11 @@ tuple2device({R, V, P, M, D, S}) -> #{ref => R,
                                       description => D,
                                       serial => S}.
 
--spec ctrl(port(), byte()) -> {ok, term()} | {error, atom()}.
+-spec ctrl(port(), byte()) -> ok | {ok, term()} | {error, atom()}.
 
 ctrl(Port, OpCode) -> ctrl(Port, OpCode, <<>>).
 
--spec ctrl(port(), byte(), binary()) -> {ok, term()} | {error, atom()}.
+-spec ctrl(port(), byte(), binary()) -> ok | {ok, term()} | {error, atom()}.
 
 ctrl(Port, OpCode, Msg) ->
     case erlang:port_control(Port, OpCode, Msg) of
