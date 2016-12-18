@@ -12,12 +12,13 @@ BUILDOUT = $(REBAR_DEPS_DIR)/ftdi
 
 OBJECT_DIR = $(BUILDOUT)/c_obj
 TARGET_DIR = $(BUILDOUT)/priv
+GENERATED = $(BUILDOUT)/c_src
 
 SOURCES = $(wildcard *.c)
 OBJECTS = $(patsubst %.c,$(OBJECT_DIR)/%.o,$(SOURCES))
 
 CFLAGS += -std=c11 -Wall -Wstrict-prototypes -fPIC
-CFLAGS += -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR)
+CFLAGS += -I $(ERTS_INCLUDE_DIR) -I $(ERL_INTERFACE_INCLUDE_DIR) -I $(GENERATED)
 CFLAGS += `pkg-config --cflags libftdi1`
 
 LDFLAGS += -shared `pkg-config --libs libftdi1`
@@ -39,10 +40,11 @@ $(OBJECT_DIR)/%.o: %.c
 	@mkdir -p $(OBJECT_DIR)
 	$(CC) -c $(CFLAGS) $(CPPFLAGS) -o $@ $<
 
-$(OBJECT_DIR)/ftdi_drv.o: ftdi_drv.h context.h transfer.h
+$(OBJECT_DIR)/ftdi_drv.o: $(GENERATED)/ftdi_drv.h context.h transfer.h
 $(OBJECT_DIR)/transfer.o: context.h transfer.h
 
-ftdi_drv.h: $(CURDIR)/../src/ftdi.hrl
+$(GENERATED)/ftdi_drv.h: $(CURDIR)/../src/ftdi.hrl
+	@mkdir -p $(GENERATED)
 	sed -n 's/^-define( *\([A-Z0-9_]\+\) *, *\([^ )]\+\).*/#define \1 \2/p' \
 		$^ > $@
 
